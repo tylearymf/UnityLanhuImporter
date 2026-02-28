@@ -586,7 +586,7 @@ namespace Lanhu
                     SetImageLayerV2(node, info, scale);
                     break;
                 default:
-                    if (info.exportable || info.hasExportDDSImage)
+                    if (info.exportable || info.hasExportDDSImage || IsImageComponent(info.name))
                         SetImageLayerV2(node, info, scale);
                     break;
             }
@@ -693,7 +693,7 @@ namespace Lanhu
             var img = go.AddComponent<Image>();
             img.raycastTarget = true;
 
-            if (Regex.IsMatch(info.name, @"^[a-zA-Z0-9_]+$"))
+            if (IsImageComponent(info.name))
             {
                 var sprite = SearchSprite(info.name);
                 if (sprite != null)
@@ -737,7 +737,7 @@ namespace Lanhu
 
             if (layer.type == "textLayer")
                 SetTextLayerV1(node, layer, scale);
-            else if (layer.hasExportDDSImage)
+            else if (layer.hasExportDDSImage || IsImageComponent(layer.name))
                 SetImageLayerV1(node, layer, scale);
 
             if (layer.layers != null)
@@ -1149,6 +1149,11 @@ namespace Lanhu
                 return bjTime.ToString("yy/MM/dd HH:mm");
             }
             return utcTimeStr;
+        }
+
+        bool IsImageComponent(string name)
+        {
+            return Regex.IsMatch(name, @"^[a-zA-Z0-9_]+$");
         }
 
         void SortProjectImages()
