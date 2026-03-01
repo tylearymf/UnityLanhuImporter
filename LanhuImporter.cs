@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Networking;
 using UnityEngine.UI;
+using Sirenix.OdinInspector;
+using Sirenix.OdinInspector.Editor;
 using Sirenix.Utilities.Editor;
 
 namespace Lanhu
@@ -23,12 +26,15 @@ namespace Lanhu
 
         List<string> publicModulePaths = new();
         string currentModulePath = "";
-        Vector2 publicModuleScrollPos;
         List<string> fontDirPaths = new();
-        Vector2 fontDirScrollPos;
-        string externalUIDirPath = "";
+        List<string> externalUIDirPaths = new();
         string spriteOutputSuffix = "";
         string imageCacheDirPath = "Assets/TempImages";
+
+        // Odin reorderable list trees
+        PropertyTree publicModuleTree;
+        PropertyTree fontDirTree;
+        PropertyTree externalUITree;
 
         string lanhuCookie = "";
         string projectId = "";
@@ -63,7 +69,7 @@ namespace Lanhu
 
         #region Editor Window Lifecycle
 
-        [MenuItem("Tools/蓝湖UI转换器")]
+        [MenuItem("Tools/蓝湖UI转换器", priority = 9999)]
         public static void ShowWindow()
         {
             GetWindow<LanhuImporter>("蓝湖转换").Show();
@@ -82,9 +88,25 @@ namespace Lanhu
                 fontDirPaths.AddRange(savedFonts.Split('|', StringSplitOptions.RemoveEmptyEntries));
 
             lanhuCookie = EditorPrefs.GetString(CookiePrefsKey, "");
-            externalUIDirPath = EditorPrefs.GetString(ExternalUIDirPrefsKey, "");
+
+            var savedExternal = EditorPrefs.GetString(ExternalUIDirPrefsKey, "");
+            externalUIDirPaths.Clear();
+            if (!string.IsNullOrEmpty(savedExternal))
+                externalUIDirPaths.AddRange(savedExternal.Split('|', StringSplitOptions.RemoveEmptyEntries));
+
             spriteOutputSuffix = EditorPrefs.GetString(SpriteOutputPrefsKey, "");
             imageCacheDirPath = EditorPrefs.GetString(ImageCacheDirPrefsKey, "Assets/TempImages");
+
+            publicModuleTree = CreatePathListTree(publicModulePaths, SavePublicModules);
+            fontDirTree = CreatePathListTree(fontDirPaths, SaveFontDirs);
+            externalUITree = CreatePathListTree(externalUIDirPaths, SaveExternalUIDirs);
+        }
+
+        void OnDisable()
+        {
+            publicModuleTree?.Dispose();
+            fontDirTree?.Dispose();
+            externalUITree?.Dispose();
         }
 
         #endregion
@@ -134,6 +156,20 @@ namespace Lanhu
                 padding = new RectOffset(8, 0, 0, 0)
             };
             GUI.Label(rect, title, style);
+        }
+
+        class PathListWrapper
+        {
+            [ListDrawerSettings(DraggableItems = true, HideAddButton = true, Expanded = true, ShowItemCount = false)]
+            [HideLabel]
+            public List<string> Paths;
+        }
+
+        PropertyTree CreatePathListTree(List<string> paths, Action saveAction)
+        {
+            var tree = PropertyTree.Create(new PathListWrapper { Paths = paths });
+            tree.OnPropertyValueChanged += (_, _) => saveAction();
+            return tree;
         }
 
         void DrawDataSourceSection()
@@ -324,20 +360,7 @@ namespace Lanhu
             DrawSectionHeader("公共模块目录", ColorModule);
             EditorGUILayout.Space(4);
 
-            publicModuleScrollPos = EditorGUILayout.BeginScrollView(publicModuleScrollPos, GUILayout.MaxHeight(120));
-            for (var i = 0; i < publicModulePaths.Count; i++)
-            {
-                EditorGUILayout.BeginHorizontal();
-                publicModulePaths[i] = EditorGUILayout.TextField(publicModulePaths[i]);
-                if (GUILayout.Button("-", GUILayout.Width(20)))
-                {
-                    publicModulePaths.RemoveAt(i);
-                    SavePublicModules();
-                    i--;
-                }
-                EditorGUILayout.EndHorizontal();
-            }
-            EditorGUILayout.EndScrollView();
+            publicModuleTree.Draw(false);
 
             if (GUILayout.Button("+ 添加公共模块目录"))
             {
@@ -358,20 +381,7 @@ namespace Lanhu
             DrawSectionHeader("字体目录", ColorFont);
             EditorGUILayout.Space(4);
 
-            fontDirScrollPos = EditorGUILayout.BeginScrollView(fontDirScrollPos, GUILayout.MaxHeight(100));
-            for (var i = 0; i < fontDirPaths.Count; i++)
-            {
-                EditorGUILayout.BeginHorizontal();
-                fontDirPaths[i] = EditorGUILayout.TextField(fontDirPaths[i]);
-                if (GUILayout.Button("-", GUILayout.Width(20)))
-                {
-                    fontDirPaths.RemoveAt(i);
-                    SaveFontDirs();
-                    i--;
-                }
-                EditorGUILayout.EndHorizontal();
-            }
-            EditorGUILayout.EndScrollView();
+            fontDirTree.Draw(false);
 
             if (GUILayout.Button("+ 添加字体目录"))
             {
@@ -389,24 +399,30 @@ namespace Lanhu
         void DrawExternalUISection()
         {
             SirenixEditorGUI.BeginBox();
-            DrawSectionHeader("其他设置", ColorExternalUI);
+            DrawSectionHeader("外部UI目录", ColorExternalUI);
             EditorGUILayout.Space(4);
 
-            EditorGUILayout.BeginHorizontal();
-            externalUIDirPath = EditorGUILayout.TextField("外部UI目录", externalUIDirPath);
-            if (GUILayout.Button("选择", GUILayout.Width(50)))
+            externalUITree.Draw(false);
+
+            if (GUILayout.Button("+ 添加外部UI目录"))
             {
                 var path = EditorUtility.OpenFolderPanel("选择外部UI目录", "", "");
                 if (!string.IsNullOrEmpty(path))
                 {
                     if (path.StartsWith(Application.dataPath))
-                        externalUIDirPath = "Assets" + path.Substring(Application.dataPath.Length);
-                    else
-                        externalUIDirPath = path;
-                    EditorPrefs.SetString(ExternalUIDirPrefsKey, externalUIDirPath);
+                        path = "Assets" + path.Substring(Application.dataPath.Length);
+                    externalUIDirPaths.Add(path);
+                    SaveExternalUIDirs();
                 }
             }
-            EditorGUILayout.EndHorizontal();
+
+            SirenixEditorGUI.EndBox();
+
+            EditorGUILayout.Space(6);
+
+            SirenixEditorGUI.BeginBox();
+            DrawSectionHeader("其他设置", ColorExternalUI);
+            EditorGUILayout.Space(4);
 
             EditorGUILayout.BeginHorizontal();
             var newCacheDir = EditorGUILayout.TextField("图片缓存目录", imageCacheDirPath);
@@ -521,6 +537,7 @@ namespace Lanhu
             var canvas = canvases.Length > 0 ? canvases[^1] : null;
             if (canvas == null) canvas = new GameObject("Canvas").AddComponent<Canvas>();
             var rootNode = CreateLayerNodeV2(rootData, canvas.transform, finalScale, rootData.width, rootData.height);
+            WrapChildrenInGenerate(rootNode.transform);
             CreatePreviewNode(rootNode.transform);
             OptimizeTransform((RectTransform)rootNode.transform);
 
@@ -555,6 +572,7 @@ namespace Lanhu
                     CreateLayerNodeV1(layer, rootNode.transform, finalScale, rootWidth, rootHeight);
             }
 
+            WrapChildrenInGenerate(rootNode.transform);
             CreatePreviewNode(rootNode.transform);
             OptimizeTransform(rootRt);
             Debug.Log($"[蓝湖转换] V1 UI生成完毕. name:{board.name}", rootNode);
@@ -575,27 +593,28 @@ namespace Lanhu
 
             rt.localEulerAngles = new Vector3(info.isFlippedVertical ? 180 : 0, info.isFlippedHorizontal ? 180 : 0, 0);
 
-            switch (info.type)
+            // ─── 基础组件识别流水线 ───
+            if (info.type == "text")
             {
-                case "text":
-                    SetTextLayerV2(node, info, scale);
-                    break;
-                case "bitmap":
-                case "symbol":
-                case "shape":
-                    SetImageLayerV2(node, info, scale);
-                    break;
-                default:
-                    if (info.exportable || info.hasExportDDSImage || IsImageComponent(info.name))
-                        SetImageLayerV2(node, info, scale);
-                    break;
+                SetTextLayerV2(node, info, scale);
+            }
+            else if (IsImageComponent(info.name))
+            {
+                SetImageLayerV2(node, info, scale);
             }
 
+            // 递归创建子节点
             if (info.children != null)
             {
                 foreach (var child in info.children)
                     CreateLayerNodeV2(child, node.transform, scale, rootWidth, rootHeight);
             }
+
+            // ─── 特殊组件识别 ───
+            TryAddButton(node, info.name);
+            TryAddGradientColor(node, info.fills);
+            TryAddScrollRect(node);
+            // [在此添加更多组件识别]
 
             return node;
         }
@@ -693,28 +712,23 @@ namespace Lanhu
             var img = go.AddComponent<Image>();
             img.raycastTarget = true;
 
-            if (IsImageComponent(info.name))
+            var sprite = SearchSprite(info.name);
+            if (sprite != null)
             {
-                var sprite = SearchSprite(info.name);
-                if (sprite != null)
+                img.sprite = sprite;
+                img.color = Color.white;
+
+                if (sprite.border != Vector4.zero)
+                    img.type = Image.Type.Sliced;
+
+                if (info.fills != null && info.fills.Count > 0)
                 {
-                    img.sprite = sprite;
-                    img.color = Color.white;
-
-                    if (sprite.border != Vector4.zero)
-                        img.type = Image.Type.Sliced;
-
-                    if (info.fills != null && info.fills.Count > 0)
-                    {
-                        var colorStyle = info.fills[0].color;
-                        if (colorStyle != null)
-                            img.color = colorStyle;
-                    }
-                    return;
+                    var colorStyle = info.fills[0].color;
+                    if (colorStyle != null)
+                        img.color = colorStyle;
                 }
+                return;
             }
-
-            img.color = new Color(0.8f, 0.8f, 0.8f, 0.4f);
         }
 
         #endregion
@@ -735,16 +749,28 @@ namespace Lanhu
 
             if (parent != null) node.transform.SetParent(parent);
 
+            // ─── 基础组件识别流水线 ───
             if (layer.type == "textLayer")
+            {
                 SetTextLayerV1(node, layer, scale);
-            else if (layer.hasExportDDSImage || IsImageComponent(layer.name))
+            }
+            else if (IsImageComponent(layer.name))
+            {
                 SetImageLayerV1(node, layer, scale);
+            }
 
+            // 递归创建子节点
             if (layer.layers != null)
             {
                 foreach (var child in layer.layers)
                     CreateLayerNodeV1(child, node.transform, scale, rootWidth, rootHeight);
             }
+
+            // ─── 特殊组件识别 ───
+            TryAddButton(node, layer.name);
+            TryAddGradientColor(node, layer.fills);
+            TryAddScrollRect(node);
+            // [在此添加更多组件识别]
 
             return node;
         }
@@ -821,22 +847,17 @@ namespace Lanhu
             var img = go.AddComponent<Image>();
             img.raycastTarget = true;
 
-            if (Regex.IsMatch(layer.name, @"^[a-zA-Z0-9_]+$"))
+            var sprite = SearchSprite(layer.name);
+            if (sprite != null)
             {
-                var sprite = SearchSprite(layer.name);
-                if (sprite != null)
-                {
-                    img.sprite = sprite;
-                    img.color = Color.white;
+                img.sprite = sprite;
+                img.color = Color.white;
 
-                    if (sprite.border != Vector4.zero)
-                        img.type = Image.Type.Sliced;
+                if (sprite.border != Vector4.zero)
+                    img.type = Image.Type.Sliced;
 
-                    return;
-                }
+                return;
             }
-
-            img.color = new Color(0.8f, 0.8f, 0.8f, 0.4f);
         }
 
         #endregion
@@ -857,12 +878,13 @@ namespace Lanhu
                 if (sprite != null) return sprite;
             }
 
-            if (!string.IsNullOrEmpty(externalUIDirPath))
+            foreach (var externalDir in externalUIDirPaths)
             {
-                var isProjectInternal = externalUIDirPath.StartsWith("Assets");
+                if (string.IsNullOrEmpty(externalDir)) continue;
+                var isProjectInternal = externalDir.StartsWith("Assets");
                 if (isProjectInternal)
                 {
-                    var sprite = SearchLooseSprite(spriteName, externalUIDirPath);
+                    var sprite = SearchLooseSprite(spriteName, externalDir);
                     if (sprite != null)
                     {
                         var copied = CopySpriteToOutput(sprite);
@@ -872,7 +894,7 @@ namespace Lanhu
                 }
                 else
                 {
-                    var copied = SearchExternalAndCopy(spriteName, externalUIDirPath);
+                    var copied = SearchExternalAndCopy(spriteName, externalDir);
                     if (copied != null) return copied;
                 }
             }
@@ -1043,7 +1065,163 @@ namespace Lanhu
 
         #endregion
 
+        #region Component Recognition
+        // 组件识别方法，按流水线调用顺序排列。
+
+        /// <summary>
+        /// 按钮识别: 节点名称包含 btn 关键字时添加 Button 组件。
+        /// </summary>
+        void TryAddButton(GameObject go, string name)
+        {
+            if (name.IndexOf("btn", StringComparison.OrdinalIgnoreCase) < 0) return;
+
+            if (!go.TryGetComponent<Image>(out var img))
+            {
+                return;
+            }
+
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+        }
+
+        /// <summary>
+        /// 渐变色识别: fills[0].gradient 有数据时添加 GradientColor 组件。
+        /// 注意: GradientColor 是当前项目特有的脚本（位于 Assembly-CSharp），此处通过反射添加。
+        /// </summary>
+        void TryAddGradientColor(GameObject go, List<DataV2.LanhuFillStyle> fills)
+        {
+            if (!go.TryGetComponent<Image>(out var img)) return;
+            if (fills == null || fills.Count == 0) return;
+            var gradient = fills[0].gradient;
+            if (gradient == null || gradient.colorStops == null || gradient.colorStops.Count < 2) return;
+
+            var gradientColorType = AppDomain.CurrentDomain.GetAssemblies()
+                .SelectMany(a => a.GetTypes())
+                .FirstOrDefault(t => t.Name == "GradientColor");
+
+            if (gradientColorType == null)
+            {
+                Debug.LogWarning("[蓝湖转换] 未找到 GradientColor 脚本，跳过渐变设置");
+                return;
+            }
+
+            var comp = go.AddComponent(gradientColorType);
+
+            var firstColor = gradient.colorStops[0].color;
+            var lastColor = gradient.colorStops[gradient.colorStops.Count - 1].color;
+
+            var bottomColor = firstColor != null ? (Color)firstColor : Color.white;
+            var topColor = lastColor != null ? (Color)lastColor : Color.white;
+
+            gradientColorType.GetField("bottomColor").SetValue(comp, bottomColor);
+            gradientColorType.GetField("topColor").SetValue(comp, topColor);
+
+            if (gradient.from != null && gradient.to != null)
+            {
+                var dx = Mathf.Abs(gradient.from.x - gradient.to.x);
+                var dy = Mathf.Abs(gradient.from.y - gradient.to.y);
+                var directionType = gradientColorType.GetNestedType("Direction");
+                var directionValue = dx >= dy
+                    ? Enum.Parse(directionType, "Horizontal")
+                    : Enum.Parse(directionType, "Vertical");
+                gradientColorType.GetField("GradientType").SetValue(comp, directionValue);
+            }
+        }
+
+        /// <summary>
+        /// 滚动列表识别: 子节点宽高一致且按固定间距排列时添加 ScrollRect。
+        /// </summary>
+        void TryAddScrollRect(GameObject go)
+        {
+            if (!go.TryGetComponent<RectTransform>(out var rt)) return;
+
+            var children = new List<RectTransform>();
+            foreach (RectTransform child in rt)
+            {
+                if (child.name.StartsWith("_")) continue;
+                children.Add(child);
+            }
+
+            if (children.Count < 2) return;
+
+            // 检查所有子节点尺寸是否一致
+            var refSize = children[0].sizeDelta;
+            const float tolerance = 2f;
+            foreach (var child in children)
+            {
+                if (Mathf.Abs(child.sizeDelta.x - refSize.x) > tolerance ||
+                    Mathf.Abs(child.sizeDelta.y - refSize.y) > tolerance)
+                    return;
+            }
+
+            // 判断排列方向: 水平 or 垂直
+            var sortedByX = children.OrderBy(c => c.anchoredPosition.x).ToList();
+            var sortedByY = children.OrderByDescending(c => c.anchoredPosition.y).ToList();
+            bool isHorizontal = IsEvenlySpaced(sortedByX, true);
+            bool isVertical = IsEvenlySpaced(sortedByY, false);
+
+            if (!isHorizontal && !isVertical) return;
+
+            // 创建 Content 容器
+            var content = new GameObject("Content");
+            var contentRt = content.AddComponent<RectTransform>();
+            contentRt.SetParent(go.transform, false);
+            contentRt.pivot = contentRt.anchorMin = contentRt.anchorMax = new Vector2(0.5f, 0.5f);
+            contentRt.anchoredPosition = Vector2.zero;
+            contentRt.sizeDelta = rt.sizeDelta;
+
+            // 移动子节点到 Content
+            foreach (var child in children)
+                child.SetParent(contentRt, false);
+
+            var scrollRect = go.AddComponent<ScrollRect>();
+            scrollRect.content = contentRt;
+            scrollRect.horizontal = isHorizontal;
+            scrollRect.vertical = !isHorizontal && isVertical;
+        }
+
+        bool IsEvenlySpaced(List<RectTransform> sorted, bool horizontal)
+        {
+            if (sorted.Count < 2) return false;
+            var spacings = new List<float>();
+            for (int i = 1; i < sorted.Count; i++)
+            {
+                float diff = horizontal
+                    ? sorted[i].anchoredPosition.x - sorted[i - 1].anchoredPosition.x
+                    : sorted[i - 1].anchoredPosition.y - sorted[i].anchoredPosition.y;
+                spacings.Add(diff);
+            }
+            var avg = spacings.Average();
+            return avg > 0 && spacings.All(s => Mathf.Abs(s - avg) < 2f);
+        }
+
+        #endregion
+
         #region Preview & Utility
+
+        /// <summary>
+        /// 将根节点的所有子节点包裹到 _Generate 容器中，使根节点结构为: _Preview + _Generate。
+        /// </summary>
+        void WrapChildrenInGenerate(Transform rootTransform)
+        {
+            var rootRt = rootTransform.GetComponent<RectTransform>();
+
+            var generateNode = new GameObject("_Generate");
+            var generateRt = generateNode.AddComponent<RectTransform>();
+            generateRt.SetParent(rootTransform, false);
+            generateRt.pivot = generateRt.anchorMin = generateRt.anchorMax = new Vector2(0.5f, 0.5f);
+            generateRt.anchoredPosition = Vector2.zero;
+            generateRt.sizeDelta = rootRt != null ? rootRt.sizeDelta : Vector2.zero;
+
+            var childrenToMove = new List<Transform>();
+            foreach (Transform child in rootTransform)
+            {
+                if (child != generateNode.transform)
+                    childrenToMove.Add(child);
+            }
+            foreach (var child in childrenToMove)
+                child.SetParent(generateRt, false);
+        }
 
         void CreatePreviewNode(Transform rootNode)
         {
@@ -1176,6 +1354,11 @@ namespace Lanhu
         void SaveFontDirs()
         {
             EditorPrefs.SetString(FontDirsPrefsKey, string.Join("|", fontDirPaths));
+        }
+
+        void SaveExternalUIDirs()
+        {
+            EditorPrefs.SetString(ExternalUIDirPrefsKey, string.Join("|", externalUIDirPaths));
         }
 
         void ResetSelection()
@@ -1453,6 +1636,36 @@ namespace Lanhu.DataV2
     public class LanhuFillStyle
     {
         public LanhuColorInfo color;
+        public LanhuGradientInfo gradient;
+        public string type;
+        public int fillType;
+        public float opacity;
+        public bool isEnabled;
+    }
+
+    [Serializable]
+    public class LanhuGradientInfo
+    {
+        public List<LanhuGradientColorStop> colorStops;
+        public string type;
+        public int gradientType;
+        public LanhuGradientPoint from;
+        public LanhuGradientPoint to;
+        public float elipseLength;
+    }
+
+    [Serializable]
+    public class LanhuGradientColorStop
+    {
+        public float position;
+        public LanhuColorInfo color;
+    }
+
+    [Serializable]
+    public class LanhuGradientPoint
+    {
+        public float x;
+        public float y;
     }
 
     [Serializable]
@@ -1547,6 +1760,7 @@ namespace Lanhu.DataV1
         public LanhuDdsImages ddsImages;
         public bool hasExportDDSImage;
         public List<LanhuLayer> layers;
+        public List<DataV2.LanhuFillStyle> fills;
     }
 
     [Serializable]
